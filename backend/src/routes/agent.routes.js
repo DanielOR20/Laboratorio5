@@ -2,7 +2,6 @@ const { Router } = require('express');
 const { z } = require('zod');
 const validar = require('../middlewares/validar');
 const { limiterIA } = require('../middlewares/rateLimiter');
-const { autenticar } = require('../middlewares/auth');
 const agentController = require('../controllers/agent.controller');
 
 const router = Router();
@@ -95,8 +94,6 @@ const sqlSchema = z.object({
  *     description: Analiza la descripción del sistema y genera el modelo relacional detallado con PKs, FKs y restricciones.
  *     tags:
  *       - IA
- *     security:
- *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -122,12 +119,6 @@ const sqlSchema = z.object({
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
- *       401:
- *         description: No autorizado - Token Bearer ausente o inválido
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  *       429:
  *         description: Límite de tasa de solicitudes superado (Rate Limit)
  *         content:
@@ -143,7 +134,6 @@ const sqlSchema = z.object({
  */
 router.post(
   '/entidades',
-  autenticar,
   limiterIA,
   validar(entidadesSchema),
   agentController.disenarEntidades
@@ -161,8 +151,6 @@ router.post(
  *     description: Genera rutas, verbos HTTP (GET, POST, PUT, DELETE), contratos JSON y códigos de estado.
  *     tags:
  *       - IA
- *     security:
- *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -187,12 +175,6 @@ router.post(
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
- *       401:
- *         description: No autorizado
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  *       429:
  *         description: Límite de tasa de solicitudes superado
  *         content:
@@ -208,7 +190,6 @@ router.post(
  */
 router.post(
   '/endpoints',
-  autenticar,
   limiterIA,
   validar(endpointsSchema),
   agentController.disenarEndpoints
@@ -226,8 +207,6 @@ router.post(
  *     description: Produce código SQL transaccional optimizado para el motor seleccionado.
  *     tags:
  *       - IA
- *     security:
- *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -252,12 +231,6 @@ router.post(
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
- *       401:
- *         description: No autorizado
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  *       429:
  *         description: Límite de solicitudes alcanzado
  *         content:
@@ -273,7 +246,6 @@ router.post(
  */
 router.post(
   '/sql',
-  autenticar,
   limiterIA,
   validar(sqlSchema),
   agentController.generarSql
@@ -291,8 +263,6 @@ router.post(
  *     description: Emite fragmentos de texto (chunks) progresivamente a medida que el modelo DeepSeek genera la respuesta, finalizando con un evento [DONE].
  *     tags:
  *       - IA
- *     security:
- *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -316,12 +286,6 @@ router.post(
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
- *       401:
- *         description: No autorizado - Token JWT inválido o ausente
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  *       429:
  *         description: Rate limit superado
  *         content:
@@ -337,7 +301,6 @@ router.post(
  */
 router.post(
   '/stream',
-  autenticar,
   limiterIA,
   validar(preguntaAgenteSchema),
   agentController.stream

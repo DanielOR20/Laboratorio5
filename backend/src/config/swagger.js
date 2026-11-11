@@ -1,16 +1,15 @@
 const swaggerJsdoc = require('swagger-jsdoc');
+const path = require('path');
 
 module.exports = swaggerJsdoc({
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'API REST Profesional - Notas, Seguridad JWT & Agentes DeepSeek IA',
-      version: '3.0.0',
-      description: `Backend de nivel de producción con:
-1. **Autenticación Bearer Token (JWT):** Sistema seguro con roles y protección de endpoints críticos.
-2. **Gestión Completa de Notas (CRUD):** Creación, consulta paginada, filtros, actualización y eliminación con validación Zod.
-3. **Agentes Inteligentes DeepSeek:** Modelado de bases de datos, especificación de endpoints REST, generación SQL y resúmenes ejecutivos.
-4. **Streaming en Tiempo Real (SSE):** Generación de respuestas token a token vía Server-Sent Events.`,
+      title: 'API REST - Sistema de Notas & Agente DeepSeek IA',
+      version: '1.0.0',
+      description: `Plataforma backend en Node.js y Express que combina:
+1. **Gestión Completa de Notas (CRUD):** Creación, consulta paginada, filtros, actualización y eliminación con validación Zod.
+2. **Servicios de Inteligencia Artificial (DeepSeek):** Modelado de bases de datos, diseño de endpoints REST, generación SQL y resúmenes ejecutivos en tiempo real.`,
       contact: {
         name: 'Equipo de Desarrollo Backend',
         url: 'http://localhost:3000',
@@ -24,10 +23,6 @@ module.exports = swaggerJsdoc({
     ],
     tags: [
       {
-        name: 'Autenticación',
-        description: 'Inicio de sesión de desarrollador y emisión de tokens JWT',
-      },
-      {
         name: 'Notas',
         description: 'Gestión y operaciones CRUD de notas técnicas',
       },
@@ -36,70 +31,10 @@ module.exports = swaggerJsdoc({
         description: 'Endpoints de interacción, razonamiento y streaming con DeepSeek',
       },
     ],
-    // Reto 2: Configuración del esquema de seguridad Bearer JWT y botón Authorize en Swagger UI
-    security: [
-      {
-        bearerAuth: [],
-      },
-    ],
     components: {
-      securitySchemes: {
-        bearerAuth: {
-          type: 'http',
-          scheme: 'bearer',
-          bearerFormat: 'JWT',
-          description: 'Introduce tu token JWT generado en /api/auth/login. Formato: Bearer <token>',
-        },
-      },
       schemas: {
         // ==========================================
-        // 1. Esquemas de Autenticación
-        // ==========================================
-        LoginRequest: {
-          type: 'object',
-          required: ['email', 'password'],
-          properties: {
-            email: {
-              type: 'string',
-              format: 'email',
-              description: 'Correo electrónico del usuario o desarrollador',
-              example: 'admin@lab5.com',
-            },
-            password: {
-              type: 'string',
-              minLength: 6,
-              description: 'Contraseña de acceso',
-              example: 'admin123',
-            },
-          },
-        },
-        LoginResponse: {
-          type: 'object',
-          properties: {
-            status: { type: 'string', example: 'success' },
-            mensaje: { type: 'string', example: 'Autenticación exitosa' },
-            datos: {
-              type: 'object',
-              properties: {
-                token: { type: 'string', example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...' },
-                tipo: { type: 'string', example: 'Bearer' },
-                expiraEn: { type: 'string', example: '2h' },
-                usuario: {
-                  type: 'object',
-                  properties: {
-                    id: { type: 'integer', example: 1 },
-                    nombre: { type: 'string', example: 'Administrador Principal' },
-                    email: { type: 'string', example: 'admin@lab5.com' },
-                    role: { type: 'string', example: 'admin' },
-                  },
-                },
-              },
-            },
-          },
-        },
-
-        // ==========================================
-        // 2. Esquemas para Gestión de Notas
+        // 1. Esquemas para Gestión de Notas
         // ==========================================
         Nota: {
           type: 'object',
@@ -164,7 +99,7 @@ module.exports = swaggerJsdoc({
         },
 
         // ==========================================
-        // 3. Esquemas para Inteligencia Artificial & Agentes
+        // 2. Esquemas para Inteligencia Artificial & Agentes
         // ==========================================
         MensajeHistorial: {
           type: 'object',
@@ -360,7 +295,7 @@ module.exports = swaggerJsdoc({
         },
 
         // ==========================================
-        // 4. Esquemas de Errores
+        // 3. Esquemas de Errores
         // ==========================================
         ErrorResponse: {
           type: 'object',
@@ -391,5 +326,10 @@ module.exports = swaggerJsdoc({
       },
     },
   },
-  apis: ['./src/routes/*.js', './src/routes/**/*.js'],
+  apis: [
+    './src/routes/*.js',
+    './src/routes/**/*.js',
+    path.join(__dirname, '../routes/*.js').replace(/\\/g, '/'),
+    path.join(__dirname, '../routes/**/*.js').replace(/\\/g, '/'),
+  ],
 });
