@@ -4,30 +4,102 @@ module.exports = swaggerJsdoc({
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'API REST - Sistema de Notas & Agente DeepSeek IA',
-      version: '1.0.0',
-      description: 'API escalable en Node.js y Express con operaciones CRUD de Notas y Agentes Inteligentes con DeepSeek.',
+      title: 'API REST Profesional - Notas, Seguridad JWT & Agentes DeepSeek IA',
+      version: '3.0.0',
+      description: `Backend de nivel de producción con:
+1. **Autenticación Bearer Token (JWT):** Sistema seguro con roles y protección de endpoints críticos.
+2. **Gestión Completa de Notas (CRUD):** Creación, consulta paginada, filtros, actualización y eliminación con validación Zod.
+3. **Agentes Inteligentes DeepSeek:** Modelado de bases de datos, especificación de endpoints REST, generación SQL y resúmenes ejecutivos.
+4. **Streaming en Tiempo Real (SSE):** Generación de respuestas token a token vía Server-Sent Events.`,
+      contact: {
+        name: 'Equipo de Desarrollo Backend',
+        url: 'http://localhost:3000',
+      },
     },
     servers: [
       {
         url: 'http://localhost:3000',
-        description: 'Servidor Local',
+        description: 'Servidor Local de Desarrollo',
       },
     ],
     tags: [
+      {
+        name: 'Autenticación',
+        description: 'Inicio de sesión de desarrollador y emisión de tokens JWT',
+      },
       {
         name: 'Notas',
         description: 'Gestión y operaciones CRUD de notas técnicas',
       },
       {
         name: 'IA',
-        description: 'Endpoints de interacción con el modelo DeepSeek',
+        description: 'Endpoints de interacción, razonamiento y streaming con DeepSeek',
+      },
+    ],
+    // Reto 2: Configuración del esquema de seguridad Bearer JWT y botón Authorize en Swagger UI
+    security: [
+      {
+        bearerAuth: [],
       },
     ],
     components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          description: 'Introduce tu token JWT generado en /api/auth/login. Formato: Bearer <token>',
+        },
+      },
       schemas: {
         // ==========================================
-        // 1. Esquemas para Gestión de Notas
+        // 1. Esquemas de Autenticación
+        // ==========================================
+        LoginRequest: {
+          type: 'object',
+          required: ['email', 'password'],
+          properties: {
+            email: {
+              type: 'string',
+              format: 'email',
+              description: 'Correo electrónico del usuario o desarrollador',
+              example: 'admin@lab5.com',
+            },
+            password: {
+              type: 'string',
+              minLength: 6,
+              description: 'Contraseña de acceso',
+              example: 'admin123',
+            },
+          },
+        },
+        LoginResponse: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', example: 'success' },
+            mensaje: { type: 'string', example: 'Autenticación exitosa' },
+            datos: {
+              type: 'object',
+              properties: {
+                token: { type: 'string', example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...' },
+                tipo: { type: 'string', example: 'Bearer' },
+                expiraEn: { type: 'string', example: '2h' },
+                usuario: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'integer', example: 1 },
+                    nombre: { type: 'string', example: 'Administrador Principal' },
+                    email: { type: 'string', example: 'admin@lab5.com' },
+                    role: { type: 'string', example: 'admin' },
+                  },
+                },
+              },
+            },
+          },
+        },
+
+        // ==========================================
+        // 2. Esquemas para Gestión de Notas
         // ==========================================
         Nota: {
           type: 'object',
@@ -92,8 +164,25 @@ module.exports = swaggerJsdoc({
         },
 
         // ==========================================
-        // 2. Esquemas para Inteligencia Artificial & Agentes
+        // 3. Esquemas para Inteligencia Artificial & Agentes
         // ==========================================
+        MensajeHistorial: {
+          type: 'object',
+          required: ['role', 'content'],
+          properties: {
+            role: {
+              type: 'string',
+              enum: ['user', 'assistant', 'system'],
+              description: 'Rol del participante en la conversación',
+              example: 'user',
+            },
+            content: {
+              type: 'string',
+              description: 'Texto del mensaje previo',
+              example: 'Hola agente, necesito diseñar una base de datos.',
+            },
+          },
+        },
         PreguntaIARequest: {
           type: 'object',
           required: ['pregunta'],
@@ -103,17 +192,13 @@ module.exports = swaggerJsdoc({
               minLength: 3,
               maxLength: 2000,
               description: 'Pregunta o instrucción para el modelo',
-              example: '¿Cuáles son las diferencias clave entre arquitectura en capas y hexagonal?',
+              example: '¿Qué entidades necesito para una base de datos?',
             },
             historial: {
               type: 'array',
-              description: 'Historial de mensajes previos',
+              description: 'Historial multi-turno ordenado y sanitizado',
               items: {
-                type: 'object',
-                properties: {
-                  role: { type: 'string', enum: ['user', 'assistant', 'system'], example: 'user' },
-                  content: { type: 'string', example: 'Hola agente' },
-                },
+                $ref: '#/components/schemas/MensajeHistorial',
               },
               example: [],
             },
@@ -125,11 +210,13 @@ module.exports = swaggerJsdoc({
           properties: {
             pregunta: {
               type: 'string',
-              example: '¿Qué entidades necesito para una base de datos de comercio electrónico?',
+              example: '¿Qué entidades necesito para una base de datos?',
             },
             historial: {
               type: 'array',
-              items: { type: 'object' },
+              items: {
+                $ref: '#/components/schemas/MensajeHistorial',
+              },
               example: [],
             },
           },
@@ -142,14 +229,14 @@ module.exports = swaggerJsdoc({
               minLength: 5,
               maxLength: 4000,
               description: 'Contexto o descripción del sistema a modelar',
-              example: 'Sistema para un hospital con pacientes, doctores, citas médicas e historial clínico.',
+              example: 'Sistema de comercio electrónico con usuarios, productos, categorías, pedidos y pagos.',
             },
             pregunta: {
               type: 'string',
               minLength: 3,
               maxLength: 4000,
               description: 'Pregunta específica sobre el modelado',
-              example: '¿Qué tablas y claves foráneas necesito?',
+              example: '¿Qué entidades necesito para una base de datos?',
             },
             dialecto: {
               type: 'string',
@@ -165,7 +252,9 @@ module.exports = swaggerJsdoc({
             },
             historial: {
               type: 'array',
-              items: { type: 'object' },
+              items: {
+                $ref: '#/components/schemas/MensajeHistorial',
+              },
               example: [],
             },
           },
@@ -191,7 +280,7 @@ module.exports = swaggerJsdoc({
               minLength: 5,
               maxLength: 3000,
               description: 'Recursos a exponer mediante endpoints REST',
-              example: 'Pacientes, Médicos, Citas y Especialidades',
+              example: 'Diseña los endpoints REST necesarios para gestionar usuarios, productos, categorías y pedidos con sus operaciones CRUD.',
             },
             estandar: {
               type: 'string',
@@ -206,7 +295,9 @@ module.exports = swaggerJsdoc({
             },
             historial: {
               type: 'array',
-              items: { type: 'object' },
+              items: {
+                $ref: '#/components/schemas/MensajeHistorial',
+              },
               example: [],
             },
           },
@@ -231,7 +322,7 @@ module.exports = swaggerJsdoc({
               type: 'string',
               minLength: 10,
               maxLength: 3000,
-              example: 'Crear tabla de clientes con id uuid, email unico, fecha registro.',
+              example: 'Genera el script SQL en PostgreSQL para crear las tablas de usuarios y pedidos con claves primarias UUID, claves foráneas on delete cascade e índices.',
             },
             motor: {
               type: 'string',
@@ -247,7 +338,9 @@ module.exports = swaggerJsdoc({
             },
             historial: {
               type: 'array',
-              items: { type: 'object' },
+              items: {
+                $ref: '#/components/schemas/MensajeHistorial',
+              },
               example: [],
             },
           },
@@ -267,7 +360,7 @@ module.exports = swaggerJsdoc({
         },
 
         // ==========================================
-        // 3. Esquemas de Errores
+        // 4. Esquemas de Errores
         // ==========================================
         ErrorResponse: {
           type: 'object',

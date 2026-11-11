@@ -92,9 +92,42 @@ const generarSql = async (req, res, next) => {
   }
 };
 
+/**
+ * Reto 3: Streaming de respuestas en tiempo real mediante Server-Sent Events (SSE)
+ */
+const stream = async (req, res, next) => {
+  const { pregunta, historial = [] } = req.body;
+
+  // Configuración de encabezados obligatorios para SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  try {
+    const streamRespuesta = await agentService.iniciarStream({ pregunta, historial });
+
+    for await (const chunk of streamRespuesta) {
+      const delta = chunk.choices[0]?.delta?.content || '';
+      if (delta) {
+        res.write(`data: ${JSON.stringify({ chunk: delta })}\n\n`);
+      }
+    }
+
+    res.write('data: [DONE]\n\n');
+    res.end();
+  } catch (error) {
+    console.error('[Error durante Streaming SSE]:', error.message);
+    res.write(`data: ${JSON.stringify({ error: 'Falla al procesar el stream con el modelo' })}\n\n`);
+    res.end();
+  }
+};
+
 module.exports = {
   preguntar,
   disenarEntidades,
   disenarEndpoints,
   generarSql,
+  stream,
 };

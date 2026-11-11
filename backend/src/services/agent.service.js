@@ -1,7 +1,8 @@
-const { chat } = require('./llm.service');
+const { chat, chatStream } = require('./llm.service');
 
 /**
- * Fábrica de agentes que encapsula un prompt del sistema y procesa la entrada del usuario
+ * Fábrica de agentes que encapsula un prompt del sistema e inyecta ordenadamente
+ * el historial multi-turno antes del mensaje del usuario.
  * @param {string} system - Prompt del sistema para definir la personalidad o especialidad del agente
  * @returns {Function} Función asíncrona (input, historial) => Promise<string>
  */
@@ -23,27 +24,65 @@ const createAgent = (system) => {
       contentString = String(input || '');
     }
 
-    // Asegurarse de que el historial solo contenga objetos { role, content } limpios
-    const mensajesLimpios = (Array.isArray(historial) ? historial : []).map((h) => ({
-      role: h.role || 'user',
-      content: typeof h.content === 'string' ? h.content : JSON.stringify(h.content || ''),
-    }));
+    // Reto 1: Inyección limpia, ordenada y tipada del historial multi-turno
+    const mensajesOrdenados = [];
 
-    // El mensaje de usuario final contiene única y estrictamente 'role' y 'content' como string
-    const messages = [
-      ...mensajesLimpios,
-      {
-        role: 'user',
-        content: contentString.trim(),
-      },
-    ];
+    if (Array.isArray(historial)) {
+      for (const turno of historial) {
+        if (turno && turno.role && turno.content) {
+          mensajesOrdenados.push({
+            role: turno.role,
+            content: String(turno.content).trim(),
+          });
+        }
+      }
+    }
+
+    // Se anexa el mensaje actual al final del historial
+    mensajesOrdenados.push({
+      role: 'user',
+      content: contentString.trim(),
+    });
 
     const respuesta = await chat({
       system,
-      messages,
+      messages: mensajesOrdenados,
     });
 
     return respuesta;
+  };
+};
+
+/**
+ * Reto 3: Fábrica para streaming progresivo de respuestas
+ * @param {string} system
+ */
+const createStreamAgent = (system) => {
+  return async (input, historial = []) => {
+    let contentString = typeof input === 'string' ? input : JSON.stringify(input);
+
+    const mensajesOrdenados = [];
+
+    if (Array.isArray(historial)) {
+      for (const turno of historial) {
+        if (turno && turno.role && turno.content) {
+          mensajesOrdenados.push({
+            role: turno.role,
+            content: String(turno.content).trim(),
+          });
+        }
+      }
+    }
+
+    mensajesOrdenados.push({
+      role: 'user',
+      content: contentString.trim(),
+    });
+
+    return await chatStream({
+      system,
+      messages: mensajesOrdenados,
+    });
   };
 };
 
@@ -95,27 +134,26 @@ Debes incluir:
 const sqlAgent = createAgent(sqlSystemPrompt);
 
 // ==========================================
-// Agente Generalista (compatibilidad heredada)
+// Agente Generalista & Streaming
 // ==========================================
 const dbAgentSystemPrompt = `Eres un arquitecto de software y analista de datos experto.
 Tu especialidad es diseñar modelos de datos (relacionales y NoSQL), definir entidades, atributos, claves primarias y foráneas, relaciones (1:1, 1:N, N:M), y diseñar endpoints RESTful limpios y escalables con sus verbos HTTP, códigos de estado y contratos de datos correspondientes.`;
 
 const dbAgent = createAgent(dbAgentSystemPrompt);
+const streamAgent = createStreamAgent(dbAgentSystemPrompt);
 
 module.exports = {
   createAgent,
+  createStreamAgent,
   dbAgent,
+  streamAgent,
   entidadesAgent,
   endpointsAgent,
   sqlAgent,
 
-  /**
-   * Procesa el diseño de entidades combinando descripcion y pregunta en un único string
-   */
   disenarEntidades: async ({ descripcion = '', pregunta = '', dialecto = 'PostgreSQL', normalizacion = '3FN', historial = [] }) => {
     let promptUsuario = '';
 
-    // Combinar descripcion y pregunta en un solo string
     if (descripcion && pregunta) {
       promptUsuario = `Contexto: ${descripcion}. Pregunta: ${pregunta}`;
     } else if (descripcion) {
@@ -134,14 +172,20 @@ module.exports = {
   },
 
   disenarEndpoints: async ({ recursos = '', requerimiento = '', estandar = 'RESTful JSON', version = 'v1', historial = [] }) => {
-    let promptUsuario = '';
     const objetivo = recursos || requerimiento || 'las entidades principales del sistema';
-    promptUsuario = `Diseña la arquitectura de endpoints REST para los siguientes recursos o entidades: ${objetivo}.\n(Estándar: ${estandar}, Versión: ${version})`;
+    const promptUsuario = `Diseña la arquitectura de endpoints REST para los siguientes recursos o entidades: ${objetivo}.\n(Estándar: ${estandar}, Versión: ${version})`;
     return endpointsAgent(promptUsuario, historial);
   },
 
   generarSql: async ({ requerimiento = '', motor = 'PostgreSQL', tipo = 'migracion DDL', historial = [] }) => {
     const promptUsuario = `Genera el script SQL para el siguiente caso:\n- Requerimiento: ${requerimiento}\n- Motor: ${motor}\n- Tipo de operación: ${tipo}`;
     return sqlAgent(promptUsuario, historial);
+  },
+
+  /**
+   * Genera el stream en tiempo real con historial inyectado
+   */
+  iniciarStream: async ({ pregunta, historial = [] }) => {
+    return streamAgent(pregunta, historial);
   },
 };

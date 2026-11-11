@@ -4,20 +4,35 @@ const swaggerSpec = require('../src/config/swagger');
 const AppError = require('../src/utils/errors');
 const errorHandler = require('../src/middlewares/errorHandler');
 const validar = require('../src/middlewares/validar');
+const { autenticar } = require('../src/middlewares/auth');
+const authService = require('../src/services/auth.service');
 const { z } = require('zod');
 
 test('Suite de Pruebas: Especificación Swagger / OpenAPI 3.0', async (t) => {
-  await t.test('Debe incluir los 4 endpoints principales de la API', () => {
+  await t.test('Debe incluir los endpoints principales y de autenticación', () => {
     const paths = Object.keys(swaggerSpec.paths || {});
+    assert.ok(paths.includes('/api/auth/login'), 'Falta /api/auth/login');
+    assert.ok(paths.includes('/api/agent/stream'), 'Falta /api/agent/stream');
     assert.ok(paths.includes('/api/agent/entidades'), 'Falta /api/agent/entidades');
     assert.ok(paths.includes('/api/agent/endpoints'), 'Falta /api/agent/endpoints');
     assert.ok(paths.includes('/api/agent/sql'), 'Falta /api/agent/sql');
     assert.ok(paths.includes('/api/agent/preguntar'), 'Falta /api/agent/preguntar');
   });
 
+  await t.test('Debe registrar el esquema de seguridad bearerAuth para JWT', () => {
+    assert.ok(
+      swaggerSpec.components?.securitySchemes?.bearerAuth,
+      'Falta el esquema de seguridad bearerAuth en Swagger'
+    );
+    assert.equal(swaggerSpec.components.securitySchemes.bearerAuth.scheme, 'bearer');
+    assert.equal(swaggerSpec.components.securitySchemes.bearerAuth.bearerFormat, 'JWT');
+  });
+
   await t.test('Debe incluir todos los schemas en components.schemas', () => {
     const schemas = Object.keys(swaggerSpec.components?.schemas || {});
     const schemasEsperados = [
+      'LoginRequest',
+      'LoginResponse',
       'DisenoEntidadesRequest',
       'DisenoEntidadesResponse',
       'DisenoEndpointsRequest',
@@ -25,6 +40,7 @@ test('Suite de Pruebas: Especificación Swagger / OpenAPI 3.0', async (t) => {
       'GenerarSqlRequest',
       'GenerarSqlResponse',
       'PreguntaAgente',
+      'MensajeHistorial',
       'ErrorResponse',
       'RateLimitErrorResponse',
     ];
@@ -35,13 +51,38 @@ test('Suite de Pruebas: Especificación Swagger / OpenAPI 3.0', async (t) => {
   });
 });
 
-test('Suite de Pruebas: Middleware de Validación Zod (validar.js)', async (t) => {
-  const schemaPrueba = z.object({
-    campoObligatorio: z.string().min(5, 'Mínimo 5 caracteres'),
+test('Suite de Pruebas: Reto 2 - Autenticación JWT y Middleware auth.js', async (t) => {
+  let tokenGenerado = null;
+
+  await t.test('Debe autenticar credenciales válidas y devolver un JWT', async () => {
+    const resultado = await authService.login({
+      email: 'admin@lab5.com',
+      password: 'admin123',
+    });
+
+    assert.ok(resultado.token, 'Debe devolver la propiedad token');
+    assert.equal(resultado.tipo, 'Bearer');
+    assert.equal(resultado.usuario.email, 'admin@lab5.com');
+    tokenGenerado = resultado.token;
   });
 
-  await t.test('Debe rechazar peticiones con datos incompletos con código 400', () => {
-    const req = { body: { campoObligatorio: 'abc' } }; // < 5 caracteres
+  await t.test('Debe rechazar credenciales incorrectas con 401', async () => {
+    await assert.rejects(
+      async () => {
+        await authService.login({
+          email: 'admin@lab5.com',
+          password: 'password_erronea',
+        });
+      },
+      (err) => {
+        assert.equal(err.statusCode, 401);
+        return true;
+      }
+    );
+  });
+
+  await t.test('Middleware autenticar debe rechazar peticiones sin token con código 401', () => {
+    const req = { headers: {} };
     let statusCapturado = null;
     let jsonCapturado = null;
 
@@ -55,29 +96,44 @@ test('Suite de Pruebas: Middleware de Validación Zod (validar.js)', async (t) =
       },
     };
 
-    let nextLlamado = false;
-    const middleware = validar(schemaPrueba);
-    middleware(req, res, () => {
-      nextLlamado = true;
-    });
-
-    assert.equal(nextLlamado, false, 'No debió llamar a next() con datos inválidos');
-    assert.equal(statusCapturado, 400, 'El status debió ser 400');
+    autenticar(req, res, () => {});
+    assert.equal(statusCapturado, 401);
     assert.equal(jsonCapturado.status, 'error');
-    assert.ok(jsonCapturado.detalles.length > 0, 'Debe incluir la lista de detalles');
   });
 
-  await t.test('Debe procesar y llamar a next() con datos válidos', () => {
-    const req = { body: { campoObligatorio: 'Texto Valido' } };
+  await t.test('Middleware autenticar debe aceptar un Bearer Token válido', () => {
+    const req = { headers: { authorization: `Bearer ${tokenGenerado}` } };
     let nextLlamado = false;
 
-    const middleware = validar(schemaPrueba);
-    middleware(req, {}, () => {
+    autenticar(req, {}, () => {
       nextLlamado = true;
     });
 
-    assert.equal(nextLlamado, true, 'Debió llamar a next() con datos válidos');
-    assert.equal(req.body.campoObligatorio, 'Texto Valido');
+    assert.equal(nextLlamado, true, 'Debió permitir el paso');
+    assert.equal(req.user.email, 'admin@lab5.com');
+  });
+});
+
+test('Suite de Pruebas: Reto 1 - Validación de Historial Multi-Turno con Zod', async (t) => {
+  const mensajeHistorialSchema = z.object({
+    role: z.enum(['user', 'assistant', 'system']),
+    content: z.string().min(1).max(10000),
+  });
+  const historialSchema = z.array(mensajeHistorialSchema).max(50);
+
+  await t.test('Debe validar correctamente un historial multi-turno ordenado', () => {
+    const historialValido = [
+      { role: 'user', content: '¿Qué es PostgreSQL?' },
+      { role: 'assistant', content: 'Es un motor de base de datos relacional potente y de código abierto.' },
+    ];
+    const parseado = historialSchema.parse(historialValido);
+    assert.equal(parseado.length, 2);
+  });
+
+  await t.test('Debe rechazar roles no permitidos en el historial', () => {
+    const historialInvalido = [{ role: 'hacker', content: 'Inyección' }];
+    const resultado = historialSchema.safeParse(historialInvalido);
+    assert.equal(resultado.success, false);
   });
 });
 

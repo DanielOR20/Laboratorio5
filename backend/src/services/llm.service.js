@@ -9,17 +9,21 @@ const deepseek = new OpenAI({
  * Sanitiza y formatea un mensaje individual asegurando que DeepSeek reciba
  * estrictamente las propiedades esperadas: { role: string, content: string }
  * @param {Object} msg
- * @returns {{ role: string, content: string }}
+ * @returns {{ role: 'system'|'user'|'assistant', content: string }}
  */
 const formatearMensajeDeepSeek = (msg) => {
   if (!msg) {
     return { role: 'user', content: '' };
   }
 
-  const role = msg.role || 'user';
+  let role = 'user';
+  if (['system', 'user', 'assistant'].includes(msg.role)) {
+    role = msg.role;
+  }
+
   let content = '';
 
-  // Si el mensaje viene con propiedades 'descripcion' y 'pregunta' separadas
+  // Combinación controlada si vienen campos separados
   if (msg.descripcion && msg.pregunta) {
     content = `Contexto: ${msg.descripcion}. Pregunta: ${msg.pregunta}`;
   } else if (msg.descripcion) {
@@ -29,21 +33,15 @@ const formatearMensajeDeepSeek = (msg) => {
   } else if (typeof msg.content === 'string') {
     content = msg.content;
   } else if (msg.content && typeof msg.content === 'object') {
-    // Si content es un objeto con descripcion y/o pregunta
     if (msg.content.descripcion && msg.content.pregunta) {
       content = `Contexto: ${msg.content.descripcion}. Pregunta: ${msg.content.pregunta}`;
-    } else if (msg.content.descripcion) {
-      content = String(msg.content.descripcion);
-    } else if (msg.content.pregunta) {
-      content = String(msg.content.pregunta);
     } else {
-      content = JSON.stringify(msg.content);
+      content = msg.content.descripcion || msg.content.pregunta || JSON.stringify(msg.content);
     }
   } else {
     content = String(msg.content ?? '');
   }
 
-  // Retornar estrictamente solo role y content (string limpio) para evitar error 400 en DeepSeek
   return {
     role,
     content: String(content).trim(),
@@ -51,13 +49,14 @@ const formatearMensajeDeepSeek = (msg) => {
 };
 
 /**
- * Realiza una consulta de chat completions a DeepSeek
+ * Construye el arreglo ordenado de mensajes para DeepSeek:
+ * [System Prompt] -> [Mensajes del Historial multi-turno ordenados] -> [Mensaje actual]
  * @param {Object} params
- * @param {string} [params.system] - Mensaje de sistema / rol
- * @param {Array<{role: string, content: string}>} [params.messages] - Lista de mensajes previos y actuales
- * @returns {Promise<string>} Texto de la respuesta generada
+ * @param {string} [params.system]
+ * @param {Array} [params.messages]
+ * @returns {Array<{role: string, content: string}>}
  */
-const chat = async ({ system, messages = [] }) => {
+const construirPayloadMensajes = ({ system, messages = [] }) => {
   const fullMessages = [];
 
   if (system) {
@@ -69,16 +68,31 @@ const chat = async ({ system, messages = [] }) => {
 
   if (Array.isArray(messages)) {
     for (const msg of messages) {
-      fullMessages.push(formatearMensajeDeepSeek(msg));
+      const limpio = formatearMensajeDeepSeek(msg);
+      if (limpio.content) {
+        fullMessages.push(limpio);
+      }
     }
   }
+
+  return fullMessages;
+};
+
+/**
+ * Realiza una consulta estándar de chat completions a DeepSeek (no streaming)
+ * @param {Object} params
+ * @param {string} [params.system]
+ * @param {Array<{role: string, content: string}>} [params.messages]
+ * @returns {Promise<string>}
+ */
+const chat = async ({ system, messages = [] }) => {
+  const fullMessages = construirPayloadMensajes({ system, messages });
 
   const response = await deepseek.chat.completions.create({
     model: 'deepseek-chat',
     messages: fullMessages,
   });
 
-  // Extraer y registrar en consola el uso de tokens devuelto por la API
   if (response.usage) {
     console.log('Uso de tokens DeepSeek:', {
       promptTokens: response.usage.prompt_tokens,
@@ -90,7 +104,28 @@ const chat = async ({ system, messages = [] }) => {
   return response.choices[0]?.message?.content || '';
 };
 
+/**
+ * Inicia una sesión de streaming de respuestas con DeepSeek vía Server-Sent Events
+ * @param {Object} params
+ * @param {string} [params.system]
+ * @param {Array<{role: string, content: string}>} [params.messages]
+ * @returns {Promise<AsyncIterable<any>>} Stream asíncrono iterable de OpenAI
+ */
+const chatStream = async ({ system, messages = [] }) => {
+  const fullMessages = construirPayloadMensajes({ system, messages });
+
+  const stream = await deepseek.chat.completions.create({
+    model: 'deepseek-chat',
+    messages: fullMessages,
+    stream: true,
+  });
+
+  return stream;
+};
+
 module.exports = {
   chat,
+  chatStream,
   formatearMensajeDeepSeek,
+  construirPayloadMensajes,
 };

@@ -2,14 +2,31 @@ const { Router } = require('express');
 const { z } = require('zod');
 const validar = require('../middlewares/validar');
 const { limiterIA } = require('../middlewares/rateLimiter');
+const { autenticar } = require('../middlewares/auth');
 const notasController = require('../controllers/notas.controller');
 const agentController = require('../controllers/agent.controller');
 
 const router = Router();
 
 // ==========================================
-// Esquemas de Validación con Zod
+// Reto 1: Esquemas de Validación Estricta para Historial Multi-Turno
 // ==========================================
+
+const mensajeHistorialSchema = z.object({
+  role: z.enum(['user', 'assistant', 'system'], {
+    required_error: 'El rol debe ser "user", "assistant" o "system"',
+  }),
+  content: z
+    .string({ required_error: 'El contenido del turno no puede ser nulo' })
+    .min(1, 'El contenido no puede estar vacío')
+    .max(10000, 'El mensaje supera los 10000 caracteres permitidos'),
+});
+
+const historialSchema = z
+  .array(mensajeHistorialSchema)
+  .max(50, 'El historial no puede superar los 50 turnos de conversación')
+  .optional()
+  .default([]);
 
 const crearNotaSchema = z.object({
   titulo: z
@@ -34,15 +51,7 @@ const preguntaIASchema = z.object({
     .string({ required_error: 'La pregunta es obligatoria' })
     .min(3, 'La pregunta debe tener al menos 3 caracteres')
     .max(2000, 'La pregunta no puede exceder 2000 caracteres'),
-  historial: z
-    .array(
-      z.object({
-        role: z.enum(['user', 'assistant', 'system']),
-        content: z.string(),
-      })
-    )
-    .optional()
-    .default([]),
+  historial: historialSchema,
 });
 
 const entidadesIASchema = z
@@ -57,7 +66,7 @@ const entidadesIASchema = z
       .enum(['1FN', '2FN', '3FN', 'Desnormalizado'])
       .optional()
       .default('3FN'),
-    historial: z.array(z.any()).optional().default([]),
+    historial: historialSchema,
   })
   .refine((data) => data.descripcion || data.pregunta, {
     message: 'Debes proporcionar al menos el campo "descripcion" o "pregunta"',
@@ -74,7 +83,7 @@ const endpointsIASchema = z.object({
     .optional()
     .default('RESTful JSON'),
   version: z.string().optional().default('v1'),
-  historial: z.array(z.any()).optional().default([]),
+  historial: historialSchema,
 });
 
 // ============================================================================
@@ -154,10 +163,12 @@ router.get('/notas', notasController.listar);
  * @openapi
  * /api/notas:
  *   post:
- *     summary: Crea una nueva nota
+ *     summary: Crea una nueva nota (Protegido por Bearer Token)
  *     description: Registra una nueva nota en el sistema validando título y contenido mediante Zod.
  *     tags:
  *       - Notas
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -190,6 +201,12 @@ router.get('/notas', notasController.listar);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: No autorizado - Token JWT no proporcionado o inválido
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  *       500:
  *         description: Error interno del servidor
  *         content:
@@ -197,7 +214,7 @@ router.get('/notas', notasController.listar);
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post('/notas', validar(crearNotaSchema), notasController.crear);
+router.post('/notas', autenticar, validar(crearNotaSchema), notasController.crear);
 
 /**
  * @openapi
@@ -247,10 +264,12 @@ router.get('/notas/:id', notasController.obtenerPorId);
  * @openapi
  * /api/notas/{id}:
  *   put:
- *     summary: Actualiza una nota existente por su ID
+ *     summary: Actualiza una nota existente por su ID (Protegido)
  *     description: Modifica el título, contenido o categoría de una nota existente.
  *     tags:
  *       - Notas
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -287,33 +306,25 @@ router.get('/notas/:id', notasController.obtenerPorId);
  *                   $ref: '#/components/schemas/Nota'
  *       400:
  *         description: Datos inválidos enviados en la petición
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: No autorizado
  *       404:
  *         description: Nota no encontrada para actualizar
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  *       500:
  *         description: Error interno del servidor
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.put('/notas/:id', validar(actualizarNotaSchema), notasController.actualizar);
+router.put('/notas/:id', autenticar, validar(actualizarNotaSchema), notasController.actualizar);
 
 /**
  * @openapi
  * /api/notas/{id}:
  *   delete:
- *     summary: Elimina una nota por su ID
+ *     summary: Elimina una nota por su ID (Protegido)
  *     description: Remueve definitivamente la nota indicada del sistema.
  *     tags:
  *       - Notas
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -325,6 +336,8 @@ router.put('/notas/:id', validar(actualizarNotaSchema), notasController.actualiz
  *     responses:
  *       204:
  *         description: Nota eliminada exitosamente (sin contenido en la respuesta)
+ *       401:
+ *         description: No autorizado
  *       404:
  *         description: Nota no encontrada para eliminar
  *         content:
@@ -338,17 +351,19 @@ router.put('/notas/:id', validar(actualizarNotaSchema), notasController.actualiz
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.delete('/notas/:id', notasController.eliminar);
+router.delete('/notas/:id', autenticar, notasController.eliminar);
 
 /**
  * @openapi
  * /api/notas/{id}/resumen:
  *   post:
- *     summary: Genera un resumen ejecutivo de la nota mediante DeepSeek
+ *     summary: Genera un resumen ejecutivo de la nota mediante DeepSeek (Protegido)
  *     description: Analiza el contenido de la nota y genera una síntesis en viñetas con acciones recomendadas.
  *     tags:
  *       - Notas
  *       - IA
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
@@ -376,6 +391,12 @@ router.delete('/notas/:id', notasController.eliminar);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: No autorizado
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  *       404:
  *         description: Nota no encontrada
  *         content:
@@ -395,7 +416,7 @@ router.delete('/notas/:id', notasController.eliminar);
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post('/notas/:id/resumen', limiterIA, notasController.generarResumenIA);
+router.post('/notas/:id/resumen', autenticar, limiterIA, notasController.generarResumenIA);
 
 // ============================================================================
 // 2. ENDPOINTS DE IA / AGENTE DEEPSEEK
@@ -405,10 +426,12 @@ router.post('/notas/:id/resumen', limiterIA, notasController.generarResumenIA);
  * @openapi
  * /api/ia/preguntar:
  *   post:
- *     summary: Envía una pregunta libre al agente inteligente
- *     description: Permite formular cualquier consulta de arquitectura o desarrollo manteniendo el contexto multi-turno.
+ *     summary: Envía una pregunta libre al agente inteligente (con Historial multi-turno)
+ *     description: Permite formular cualquier consulta de arquitectura o desarrollo manteniendo el contexto ordenado del historial.
  *     tags:
  *       - IA
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -441,6 +464,12 @@ router.post('/notas/:id/resumen', limiterIA, notasController.generarResumenIA);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: No autorizado - Requiere Bearer Token JWT
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  *       429:
  *         description: Límite de tasa de solicitudes superado (Rate Limit)
  *         content:
@@ -456,6 +485,7 @@ router.post('/notas/:id/resumen', limiterIA, notasController.generarResumenIA);
  */
 router.post(
   '/ia/preguntar',
+  autenticar,
   limiterIA,
   validar(preguntaIASchema),
   agentController.preguntar
@@ -465,10 +495,12 @@ router.post(
  * @openapi
  * /api/ia/entidades:
  *   post:
- *     summary: Diseña entidades y modelo de base de datos normalizado
+ *     summary: Diseña entidades y modelo de base de datos normalizado (Protegido)
  *     description: Analiza la descripción y/o pregunta del usuario y genera un modelado de entidades detallado en Markdown.
  *     tags:
  *       - IA
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -490,25 +522,16 @@ router.post(
  *               $ref: '#/components/schemas/DisenoEntidadesResponse'
  *       400:
  *         description: Error de validación en los parámetros de entrada
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: No autorizado
  *       429:
  *         description: Límite de peticiones alcanzado (Rate Limit)
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/RateLimitErrorResponse'
  *       502:
  *         description: El servicio de IA no está disponible o devolvió un error
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.post(
   '/ia/entidades',
+  autenticar,
   limiterIA,
   validar(entidadesIASchema),
   agentController.disenarEntidades
@@ -518,10 +541,12 @@ router.post(
  * @openapi
  * /api/ia/endpoints:
  *   post:
- *     summary: Propone una lista completa de endpoints REST basados en un requerimiento
+ *     summary: Propone una lista completa de endpoints REST basados en un requerimiento (Protegido)
  *     description: Diseña la arquitectura de rutas, verbos HTTP, payloads y códigos de estado siguiendo los estándares RESTful.
  *     tags:
  *       - IA
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -542,28 +567,63 @@ router.post(
  *               $ref: '#/components/schemas/DisenoEndpointsResponse'
  *       400:
  *         description: Error de validación en la definición de recursos
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: No autorizado
  *       429:
  *         description: Límite de tasa de solicitudes superado
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/RateLimitErrorResponse'
  *       502:
  *         description: Falla en el proveedor del modelo de lenguaje
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.post(
   '/ia/endpoints',
+  autenticar,
   limiterIA,
   validar(endpointsIASchema),
   agentController.disenarEndpoints
+);
+
+/**
+ * @openapi
+ * /api/ia/stream:
+ *   post:
+ *     summary: Streaming en tiempo real con Server-Sent Events (SSE) (Protegido)
+ *     description: Genera respuestas continuas token por token desde DeepSeek mediante eventos de texto en tiempo real.
+ *     tags:
+ *       - IA
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/PreguntaIARequest'
+ *           example:
+ *             pregunta: "¿Cómo estructurar una API escalable con microservicios en Express?"
+ *             historial: []
+ *     responses:
+ *       200:
+ *         description: Flujo de eventos Server-Sent Events (SSE)
+ *         content:
+ *           text/event-stream:
+ *             schema:
+ *               type: string
+ *               example: "data: {\"chunk\":\"Para estructurar\"}\n\ndata: [DONE]\n\n"
+ *       400:
+ *         description: Error de validación Zod
+ *       401:
+ *         description: No autorizado
+ *       429:
+ *         description: Rate limit superado
+ *       502:
+ *         description: Error en la conexión con DeepSeek
+ */
+router.post(
+  '/ia/stream',
+  autenticar,
+  limiterIA,
+  validar(preguntaIASchema),
+  agentController.stream
 );
 
 module.exports = router;
